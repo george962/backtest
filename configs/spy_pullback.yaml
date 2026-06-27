@@ -1,0 +1,56 @@
+ticker: SPY
+start_date: "1993-01-01"
+data_cache: data/SPY.parquet
+
+costs:
+  trading_bps_per_side: 3.0
+  margin_rate_annual: 0.06
+  max_allowed_exposure: 2.0
+
+strategy_grid:
+  drop_thresholds: [-0.015, -0.020, -0.025, -0.030]
+  hold_days: [3, 5, 7, 10, 15]
+  boost_exposures: [1.25, 1.50, 1.75, 2.00]
+  modes: ["Core", "Def"]
+  exit_policies:
+    - Fixed
+    - StopBelow200
+    - Recover20
+    - StopBelow200+Recover20
+
+selection:
+  max_avg_exposure: 1.10
+  max_drawdown_floor: -0.40
+  min_train_edge: 0.0
+
+walk_forward_windows:
+  - TrainEnd: "2002-12-31"
+    TestStart: "2003-01-01"
+    TestEnd: "2005-12-31"
+  - TrainEnd: "2005-12-31"
+    TestStart: "2006-01-01"
+    TestEnd: "2008-12-31"
+  - TrainEnd: "2008-12-31"
+    TestStart: "2009-01-01"
+    TestEnd: "2011-12-31"
+  - TrainEnd: "2011-12-31"
+    TestStart: "2012-01-01"
+    TestEnd: "2014-12-31"
+  - TrainEnd: "2014-12-31"
+    TestStart: "2015-01-01"
+    TestEnd: "2017-12-31"
+  - TrainEnd: "2017-12-31"
+    TestStart: "2018-01-01"
+    TestEnd: "2020-12-31"
+  - TrainEnd: "2020-12-31"
+    TestStart: "2021-01-01"
+    TestEnd: "2023-12-31"
+  - TrainEnd: "2023-12-31"
+    TestStart: "2024-01-01"
+    TestEnd: "2026-12-31"
+
+trade_stat_periods:
+  - ["1993-01-01", "2026-12-31"]
+  - ["2003-01-01", "2026-12-31"]
+  - ["2017-01-01", "2021-12-31"]
+  - ["2022-01-01", "2026-12-31"]

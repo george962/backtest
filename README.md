@@ -1,96 +1,139 @@
-# SPY Pullback Overlay — Walk-Forward Strategy Validation
+# SPY Pullback Overlay Backtest
 
-A systematic test of a tactical exposure-boost strategy on SPY: increase exposure above 1x
-during short-term pullbacks within a confirmed long-term uptrend, then compare the result
-against a *fairly matched* benchmark — not just plain buy-and-hold — across eight historical
-market regimes from 1993 to today.
+A reproducible research harness for testing a tactical SPY exposure overlay.
 
-## Why this exists
+The strategy temporarily increases exposure during short-term pullbacks inside a
+long-term uptrend, then measures whether the timing adds value beyond a
+matched-exposure benchmark. The project is intentionally small, but it is built
+to show the habits that matter in research infrastructure: explicit config,
+cached data, walk-forward validation, cost modeling, tests, and repeatable run
+artifacts.
 
-It's easy to convince yourself a trading idea works by testing it once, on one time period,
-against a benchmark that isn't really comparable. This project is an attempt to make that
-mistake hard to make by accident: every result here has to survive real trading costs, real
-margin financing costs, multiple market regimes, and a benchmark that accounts for the fact
-that taking on more exposure should be expected to produce more return on its own.
+## What the Strategy Tests
 
-## Signal definition
+A raw pullback signal fires when:
 
-A pullback signal fires when, simultaneously:
-- Price is **above** its 200-day moving average (confirming a long-term uptrend)
-- Price is **below** its 20-day moving average (confirming a short-term pullback)
-- The trailing 5-day return is below a configurable threshold (e.g. -2.0%)
+- SPY is above its 200-day moving average
+- SPY is below its 20-day moving average
+- trailing 5-day return is below a configured threshold
 
-When the signal fires, exposure is temporarily boosted above the base allocation for a fixed
-holding period, with several exit policy variants tested (fixed hold, exit on trend break,
-exit on short-term recovery, or both).
+When the signal fires, the strategy boosts exposure for a fixed holding period.
+The grid tests multiple thresholds, hold periods, exposure levels, base exposure
+modes, and exit policies.
 
-## What makes the benchmark fair
+## Why the Benchmark Is Matched
 
-Most "my strategy beats buy-and-hold" claims compare a leveraged strategy against a 1x
-benchmark — which mostly just proves that more exposure produces more return, not that the
-*timing* of that exposure added anything. This project instead constructs a **matched-exposure
-benchmark**: a buy-and-hold position scaled to the same average exposure as the strategy,
-carrying the same margin financing cost. The "True Edge" metric reported is the strategy's
-return **minus** that matched benchmark — so a positive edge means the timing of *when*
-exposure increased actually mattered, not just that exposure was higher on average.
+The strategy sometimes uses more than 1.0x exposure. Comparing that directly to
+plain buy-and-hold would mostly reward leverage, not timing. This project
+therefore compares each strategy to a buy-and-hold benchmark scaled to the same
+average exposure and charged the same margin financing cost. The reported "True
+Edge" is:
 
-## Cost model
+```text
+strategy annual return - matched-exposure benchmark annual return
+```
 
-- **Trading costs**: configurable basis points per side, applied on every change in position
-- **Margin financing**: configurable annual rate, applied only to the exposure above 1x
-- Both costs are applied directly inside the return series, not added as a footnote after
-  the fact
+## Validation Approach
 
-## Validation method: walk-forward windows
+The main demo path uses a train-then-test walk-forward process:
 
-Rather than one backtest over the full history, the strategy is evaluated independently
-across eight non-overlapping windows spanning different regimes:
+1. Build the full strategy grid.
+2. For each window, select the best strategy using only data through `TrainEnd`.
+3. Test that selected strategy on the next unseen window.
+4. Stitch the out-of-sample windows into one equity curve.
 
-| Window | Regime context |
-|---|---|
-| 2003–2005 | Post dot-com recovery |
-| 2006–2008 | Pre/post Global Financial Crisis |
-| 2009–2011 | Post-GFC recovery |
-| 2012–2014 | Steady bull market |
-| 2015–2017 | Low-volatility bull market |
-| 2018–2020 | Volatility spike + COVID crash |
-| 2021–2023 | COVID recovery + 2022 rate-hike drawdown |
-| 2024–2026 | Most recent regime |
+The run also writes a static grid diagnostic across test windows, but that is
+kept separate from the train-selected out-of-sample result.
 
-A strategy only qualifies as "practical" if it clears a minimum number of positive-edge
-windows, keeps worst-case drawdown within a defined limit, and keeps average exposure within
-a realistic bound — not just if it looks good on average.
+## How to Run Locally
 
-## How to run
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
+```
+
+Run the full backtest:
+
+```bash
+python backtest.py run
+```
+
+You can also run the same default command with:
+
+```bash
 python backtest.py
 ```
 
-This will print:
-1. The best overall walk-forward candidates (ranked by consistency of edge, not just average)
-2. The subset that passes practical risk/exposure filters
-3. A detailed window-by-window breakdown for the top candidate
-4. Trade-level statistics (win rate, average trade, longest losing streak) for the boost
-   overlay specifically
-5. A live signal check against the most recent market data
+Show the latest signal state:
 
-## Results
+```bash
+python backtest.py signal
+```
 
-*(Fill in after your most recent run — pull these directly from the script's console output)*
+Force a fresh market data download:
 
-- Selected strategy: `[paste selected_strategy here]`
-- Positive windows: `[X / 8]`
-- Average annual edge over matched benchmark: `[X%]`
-- Worst-case window edge: `[X%]`
-- Worst-case max drawdown: `[X%]`
+```bash
+python backtest.py run --refresh-data
+```
 
-## What I'd build next
+The first run downloads SPY data and caches it at `data/SPY.parquet`. Later runs
+reuse that cache unless `--refresh-data` is passed.
 
-- Save chart output (equity curve, drawdown curve) automatically per run instead of console
-  tables only
-- Extend to partial-allocation sizing (running this strategy on only 25/50/75% of a SPY
-  position while the rest stays buy-and-hold)
-- Add a small test suite around the cost/margin calculation functions, since a silent error
-  there would quietly invalidate every result above it
+## Run Outputs
+
+Each run creates a folder like:
+
+```text
+runs/20260627_163000_spy_pullback/
+```
+
+Inside it:
+
+- `config.yaml`: exact config used for the run
+- `walk_forward_selected.csv`: train-selected strategy for each test window
+- `static_summary_table.csv`: static grid diagnostic summary
+- `static_window_grid.csv`: per-window static grid results
+- `trade_stats.csv`: overlay trade statistics
+- `summary.md`: markdown summary tables
+- `oos_equity_curve.png`: train-selected out-of-sample equity curve
+- `oos_drawdown_chart.png`: train-selected out-of-sample drawdown
+- `oos_edge_by_window.png`: out-of-sample edge by test window
+- `static_equity_curve.png`: static diagnostic curve for the top practical strategy
+
+## Run with Docker
+
+Build the image:
+
+```bash
+docker build -t spy-pullback-backtest .
+```
+
+Run it and save artifacts back to your machine:
+
+```bash
+docker run --rm -v "$PWD/runs:/app/runs" -v "$PWD/data:/app/data" spy-pullback-backtest
+```
+
+## Run Tests
+
+```bash
+pytest
+```
+
+The tests focus on the parts that can quietly invalidate a backtest:
+
+- position shifting so signals trade on the next bar
+- turnover and margin cost math
+- drawdown calculation
+- train-period strategy selection under risk filters
+
+## Interview Talking Point
+
+This is not presented as a production trading system. It is a scoped research
+infrastructure demo:
+
+> I wanted to show how I would make financial experimentation reproducible and
+> auditable: explicit configs, cached inputs, realistic costs, train-then-test
+> validation, saved artifacts, tests around the financial math, and a Dockerized
+> run path.

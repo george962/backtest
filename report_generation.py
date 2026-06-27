@@ -1,102 +1,106 @@
-"""
-report_generation.py
-
-Drop this file in the same folder as backtest.py.
-It generates charts and exports result tables without you needing to
-paste any code into your main script — just import and call one function.
-"""
+from __future__ import annotations
 
 import os
+from pathlib import Path
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+os.environ.setdefault("XDG_CACHE_HOME", "/tmp")
+
 import matplotlib.pyplot as plt
+
+from backtest_core import matched_benchmark_returns
+
+
+def _equity_from_returns(returns):
+    return (1 + returns.fillna(0)).cumprod()
 
 
 def generate_report(
+    output_dir,
     selected_strategy,
     strategy_returns,
     strategy_positions,
     fixed_df,
     summary_df,
-    df,
+    data,
     margin_rate_annual,
-    output_dir="outputs",
+    walk_forward_df,
+    oos_returns,
+    oos_positions,
+    oos_benchmark_returns,
+    trade_stats_df,
 ):
-    """
-    Generates and saves:
-      - equity_curve.png   (strategy vs. matched-exposure benchmark, log scale)
-      - drawdown_chart.png (drawdown over time for the selected strategy)
-      - edge_by_window.png (bar chart of True Edge per walk-forward window)
-      - summary_table.csv / summary_table.md (ranked strategy summary)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    Call this once, at the very end of backtest.py, after everything else
-    has run — see the two-line snippet in README.md for exactly where.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    # ---- Equity curve: selected strategy vs. matched-exposure benchmark ----
     selected_returns = strategy_returns[selected_strategy].fillna(0)
-    selected_equity = (1 + selected_returns).cumprod()
-
+    selected_equity = _equity_from_returns(selected_returns)
     avg_exposure = strategy_positions[selected_strategy].mean()
-    matched_margin_exposure = max(avg_exposure - 1.0, 0)
-    matched_bh_returns = (
-        avg_exposure * df["Daily_Return"].fillna(0)
-        - matched_margin_exposure * (margin_rate_annual / 252)
+    matched_bh_equity = _equity_from_returns(
+        matched_benchmark_returns(data, avg_exposure, margin_rate_annual)
     )
-    matched_bh_equity = (1 + matched_bh_returns).cumprod()
 
     plt.figure(figsize=(11, 5))
-    plt.plot(selected_equity.index, selected_equity.values,
-              label=f"Strategy: {selected_strategy}", linewidth=1.4)
-    plt.plot(matched_bh_equity.index, matched_bh_equity.values,
-              label=f"Matched-Exposure Benchmark ({avg_exposure:.2f}x)",
-              linewidth=1.2, linestyle="--")
+    plt.plot(selected_equity.index, selected_equity.values, label=f"Static diagnostic: {selected_strategy}", linewidth=1.4)
+    plt.plot(
+        matched_bh_equity.index,
+        matched_bh_equity.values,
+        label=f"Matched-exposure benchmark ({avg_exposure:.2f}x)",
+        linewidth=1.2,
+        linestyle="--",
+    )
     plt.yscale("log")
-    plt.title("Equity Curve — Strategy vs. Matched-Exposure Benchmark (log scale)")
+    plt.title("Static Diagnostic Equity Curve")
     plt.xlabel("Date")
-    plt.ylabel("Growth of $1 (log scale)")
+    plt.ylabel("Growth of $1, log scale")
     plt.legend(loc="upper left", fontsize=8)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "equity_curve.png"), dpi=150)
+    plt.savefig(output_dir / "static_equity_curve.png", dpi=150)
     plt.close()
 
-    # ---- Drawdown chart ----
-    rolling_max = selected_equity.cummax()
-    drawdown = selected_equity / rolling_max - 1
+    oos_equity = _equity_from_returns(oos_returns)
+    oos_benchmark_equity = _equity_from_returns(oos_benchmark_returns)
+    plt.figure(figsize=(11, 5))
+    plt.plot(oos_equity.index, oos_equity.values, label="Train-selected strategy", linewidth=1.5)
+    plt.plot(oos_benchmark_equity.index, oos_benchmark_equity.values, label="Window-matched benchmark", linewidth=1.2, linestyle="--")
+    plt.yscale("log")
+    plt.title("Out-of-Sample Walk-Forward Equity Curve")
+    plt.xlabel("Date")
+    plt.ylabel("Growth of $1, log scale")
+    plt.legend(loc="upper left", fontsize=8)
+    plt.tight_layout()
+    plt.savefig(output_dir / "oos_equity_curve.png", dpi=150)
+    plt.close()
 
+    oos_drawdown = oos_equity / oos_equity.cummax() - 1
     plt.figure(figsize=(11, 3.5))
-    plt.fill_between(drawdown.index, drawdown.values * 100, 0,
-                      color="firebrick", alpha=0.5)
-    plt.title(f"Drawdown — {selected_strategy}")
+    plt.fill_between(oos_drawdown.index, oos_drawdown.values * 100, 0, color="firebrick", alpha=0.5)
+    plt.title("Out-of-Sample Walk-Forward Drawdown")
     plt.xlabel("Date")
     plt.ylabel("Drawdown (%)")
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "drawdown_chart.png"), dpi=150)
+    plt.savefig(output_dir / "oos_drawdown_chart.png", dpi=150)
     plt.close()
 
-    # ---- Walk-forward edge by window (bar chart) ----
-    window_edges = fixed_df[fixed_df["Strategy"] == selected_strategy][["Window", "True Edge"]]
-
     plt.figure(figsize=(9, 4))
-    colors_bar = ["seagreen" if v > 0 else "firebrick" for v in window_edges["True Edge"]]
-    plt.bar(window_edges["Window"], window_edges["True Edge"] * 100, color=colors_bar)
+    colors_bar = ["seagreen" if v > 0 else "firebrick" for v in walk_forward_df["Test True Edge"]]
+    plt.bar(walk_forward_df["Window"], walk_forward_df["Test True Edge"] * 100, color=colors_bar)
     plt.axhline(0, color="black", linewidth=0.8)
-    plt.title(f"True Edge by Walk-Forward Window — {selected_strategy}")
+    plt.title("Train-Selected True Edge by Test Window")
     plt.ylabel("Edge over matched benchmark (%)")
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "edge_by_window.png"), dpi=150)
+    plt.savefig(output_dir / "oos_edge_by_window.png", dpi=150)
     plt.close()
 
-    # ---- Export summary table as CSV and Markdown ----
-    summary_df.to_csv(os.path.join(output_dir, "summary_table.csv"), index=False)
+    summary_df.to_csv(output_dir / "static_summary_table.csv", index=False)
+    fixed_df.to_csv(output_dir / "static_window_grid.csv", index=False)
+    walk_forward_df.to_csv(output_dir / "walk_forward_selected.csv", index=False)
+    trade_stats_df.to_csv(output_dir / "trade_stats.csv", index=False)
 
-    with open(os.path.join(output_dir, "summary_table.md"), "w") as f:
-        f.write("# Strategy Summary — Walk-Forward Results\n\n")
+    with open(output_dir / "summary.md", "w", encoding="utf-8") as f:
+        f.write("# Backtest Run Summary\n\n")
+        f.write("## Train-Then-Test Walk-Forward\n\n")
+        f.write(walk_forward_df.to_markdown(index=False))
+        f.write("\n\n## Static Grid Diagnostic: Top 20\n\n")
         f.write(summary_df.head(20).to_markdown(index=False))
-
-    print()
-    print(f"Saved charts and tables to ./{output_dir}/:")
-    print(" - equity_curve.png")
-    print(" - drawdown_chart.png")
-    print(" - edge_by_window.png")
-    print(" - summary_table.csv / summary_table.md")
